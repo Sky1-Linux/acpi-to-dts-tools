@@ -9,8 +9,17 @@
 #
 # The extraction_dir should contain output from extract-hw-info.sh run in ACPI mode.
 #
+# Requirements: gawk (GNU awk) - mawk is not compatible
+#
 
 set -e
+
+# Check for gawk (GNU awk) - required for match() with array capture
+if ! awk --version 2>/dev/null | grep -q "GNU Awk"; then
+    echo "[ERROR] This script requires GNU awk (gawk)." >&2
+    echo "        Install with: sudo apt install gawk" >&2
+    exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTRACTION_DIR="${1:?Usage: $0 <extraction_dir> [output.dts]}"
@@ -1303,7 +1312,8 @@ main() {
     local board_model="Radxa Orion O6"
     local board_compat="radxa,orion-o6"
 
-    if grep -q "CD8160" "$EXTRACTION_DIR/01-system-info.txt" 2>/dev/null; then
+    # Detect board variant from DMI Product Name
+    if grep -qE "Product Name:.*O6N" "$EXTRACTION_DIR/01-system-info.txt" 2>/dev/null; then
         board_model="Radxa Orion O6N"
         board_compat="radxa,orion-o6n"
     fi
