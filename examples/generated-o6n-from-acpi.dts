@@ -3,7 +3,7 @@
  * Device Tree Source for Radxa Orion O6N
  *
  * Auto-generated from ACPI DSDT by acpi-to-dts.sh
- * Generated: 2026-01-02T17:20:02+11:00
+ * Generated: 2026-01-02T17:39:21+11:00
  *
  * This file was created from hardware extraction data.
  * Manual review and adjustment is required before use.
@@ -185,6 +185,34 @@
 	};
 
 	/* Fixed Regulators */
+
+	/* PWM Backlight */
+
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pwm0 0 100000>;
+		brightness-levels = <0 4 8 16 32 64 128 255>;
+		default-brightness-level = <6>;
+		enable-gpios = <&fch_gpio3 15 GPIO_ACTIVE_HIGH>;
+		status = "disabled";
+	};
+
+	/* eDP Panel */
+
+	panel_edp: panel-edp {
+		compatible = "panel-edp";
+		prepare-delay-ms = <120>;
+		enable-delay-ms = <120>;
+		unprepare-delay-ms = <500>;
+		disable-delay-ms = <120>;
+		width-mm = <129>;
+		height-mm = <171>;
+		enable-gpios = <&fch_gpio3 16 GPIO_ACTIVE_HIGH>;
+		backlight = <&backlight>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_edp0>;
+		status = "disabled";
+	};
 
 	soc@0 {
 		compatible = "simple-bus";
@@ -596,6 +624,48 @@
 			reg = <0x0 0x14260000 0x0 0x00010000>;
 			interrupts = <GIC_SPI 327 IRQ_TYPE_LEVEL_HIGH>;
 			status = "okay";
+		};
+
+		gmac0: ethernet@09320000 {
+			compatible = "cix,sky1-gmac";
+			reg = <0x0 0x09320000 0x0 0x00010000>;
+			interrupts = <GIC_SPI 343 IRQ_TYPE_LEVEL_HIGH>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&gmac0,gmac0-init>;
+			phy-mode = "rgmii-id";
+			phy-handle = <&phy0>;
+			status = "disabled";
+
+			mdio {
+				compatible = "snps,dwmac-mdio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				phy0: ethernet-phy@1 {
+					compatible = "ethernet-phy-ieee802.3-c22";
+					reg = <1>;
+				};
+			};
+		};
+
+		gmac1: ethernet@09330000 {
+			compatible = "cix,sky1-gmac";
+			reg = <0x0 0x09330000 0x0 0x00010000>;
+			interrupts = <GIC_SPI 351 IRQ_TYPE_LEVEL_HIGH>;
+			phy-mode = "rgmii-id";
+			phy-handle = <&phy1>;
+			status = "disabled";
+
+			mdio {
+				compatible = "snps,dwmac-mdio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				phy1: ethernet-phy@2 {
+					compatible = "ethernet-phy-ieee802.3-c22";
+					reg = <2>;
+				};
+			};
 		};
 	}; /* end soc@0 */
 

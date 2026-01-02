@@ -201,6 +201,9 @@ declare -A DEVICE_CLOCKS      # device -> "clock_id:clock_name"
 declare -A DEVICE_RESETS      # device -> "rst_controller:rst_id:rst_name"
 declare -A DEVICE_PINCTRL     # device -> "pinctrl_group"
 declare -A DEVICE_DSD         # device -> "prop=value,prop=value"
+declare -A DEVICE_GPIO        # device -> "controller:pin" (from GpioIo)
+declare -A DEVICE_CHILDREN    # parent_device -> "child1:addr,child2:addr" (nested devices)
+declare -A CHILD_DEVICE_DSD   # child_device -> "prop=value,prop=value"
 
 #############################################################################
 # Helper Functions
@@ -522,12 +525,85 @@ extract_device_properties() {
         }
     }
 
+    # GpioIo parsing - extract GPIO controller and pin
+    /GpioIo/ && device != "" {
+        in_gpio = 1
+        gpio_ctrl = ""
+        gpio_pin = ""
+    }
+
+    in_gpio && /\\_SB\./ {
+        # GPIO controller reference: "\\_SB.GPI3"
+        if (match($0, /\\_SB\.([A-Z0-9]+)/, arr)) {
+            gpio_ctrl = arr[1]
+        }
+    }
+
+    in_gpio && /Pin list/ { in_gpio_pin = 1 }
+
+    in_gpio_pin && /0x[0-9A-Fa-f]+/ {
+        if (match($0, /0x([0-9A-Fa-f]+)/, arr)) {
+            gpio_pin = strtonum("0x" arr[1])
+            if (gpio_ctrl != "") {
+                printf "GPIO|%s|%s|%s\n", device, gpio_ctrl, gpio_pin
+            }
+            in_gpio_pin = 0
+            in_gpio = 0
+        }
+    }
+
+    # Track top-level devices (8 spaces / 2 tabs indentation)
+    /^        Device \([A-Z0-9]+\)/ {
+        if (match($0, /Device \(([A-Z0-9]+)\)/, arr)) {
+            current_parent = arr[1]
+        }
+    }
+
+    # Track child devices (12 spaces / 3 tabs indentation)
+    /^            Device \([A-Z0-9]+\)/ {
+        if (match($0, /Device \(([A-Z0-9]+)\)/, arr)) {
+            child_name = arr[1]
+            parent_for_child = current_parent
+            in_child = 1
+            child_addr = ""
+            child_compat = ""
+            wait_compat = 0
+        }
+    }
+
+    # Child device _ADR (address)
+    in_child && /Name \(_ADR,/ {
+        if (match($0, /0x([0-9A-Fa-f]+)/, arr)) {
+            child_addr = strtonum("0x" arr[1])
+        } else if (/One/) {
+            child_addr = 1
+        } else if (/Zero/) {
+            child_addr = 0
+        }
+    }
+
+    # Child device _DSD compatible - mark to read next line
+    in_child && /"compatible",/ {
+        wait_compat = 1
+        next
+    }
+
+    # Read compatible value on next line
+    in_child && wait_compat {
+        if (match($0, /"([a-z][a-z0-9,.-]*)"/, arr)) {
+            child_compat = arr[1]
+            printf "CHILD|%s|%s|%s|%s\n", parent_for_child, child_name, child_addr, child_compat
+            wait_compat = 0
+            in_child = 0
+        }
+    }
+
     ' "$dsdt_file")
 
     # Populate associative arrays
-    local clk_count=0 rst_count=0 pin_count=0 dsd_count=0
+    local clk_count=0 rst_count=0 pin_count=0 dsd_count=0 gpio_count=0 child_count=0
 
-    while IFS='|' read -r type device val1 val2 val3; do
+    while IFS='|' read -r type device val1 val2 val3 val4; do
         [[ -z "$type" ]] && continue
 
         case "$type" in
@@ -552,10 +628,29 @@ extract_device_properties() {
                 DEVICE_DSD["$device"]="$val1"
                 ((dsd_count++)) || true
                 ;;
+            GPIO)
+                # val1=controller (GPI0/GPI3), val2=pin number
+                if [[ -n "${DEVICE_GPIO[$device]}" ]]; then
+                    DEVICE_GPIO["$device"]="${DEVICE_GPIO[$device]},${val1}:${val2}"
+                else
+                    DEVICE_GPIO["$device"]="${val1}:${val2}"
+                fi
+                ((gpio_count++)) || true
+                ;;
+            CHILD)
+                # device=parent, val1=child_name, val2=addr, val3=compatible
+                if [[ -n "${DEVICE_CHILDREN[$device]}" ]]; then
+                    DEVICE_CHILDREN["$device"]="${DEVICE_CHILDREN[$device]},${val1}:${val2}"
+                else
+                    DEVICE_CHILDREN["$device"]="${val1}:${val2}"
+                fi
+                CHILD_DEVICE_DSD["${device}_${val1}"]="compatible=${val3}"
+                ((child_count++)) || true
+                ;;
         esac
     done <<< "$props"
 
-    log "Extracted: $clk_count clocks, $rst_count resets, $pin_count pinctrl, $dsd_count DSD"
+    log "Extracted: $clk_count clocks, $rst_count resets, $pin_count pinctrl, $dsd_count DSD, $gpio_count gpio, $child_count children"
 }
 
 # Parse I2C devices from i2cdetect output
@@ -1185,6 +1280,78 @@ EOF
 		};
 EOF
     done
+
+    # GMAC / Ethernet MAC controllers with PHY child nodes
+    grep "CIXH7020" "$devices_file" 2>/dev/null | sort -t'|' -k3,3n | while IFS='|' read -r name hid uid addr size irq; do
+        [[ -z "$addr" || "$addr" == "00000000" ]] && continue
+
+        local irq_spi=$(irq_to_spi "$irq")
+        local gmac_idx=$((uid))
+        local gmac_name="gmac${gmac_idx}"
+        local dev_name="MAC${uid}"
+
+        # Get DSD properties (phy-mode, etc.)
+        local dsd="${DEVICE_DSD[$dev_name]:-}"
+        local phy_mode="rgmii-id"
+        if [[ "$dsd" =~ phy-mode=([^,]+) ]]; then
+            phy_mode="${BASH_REMATCH[1]}"
+        fi
+
+        # Get pinctrl
+        local pinctrl="${DEVICE_PINCTRL[$dev_name]:-}"
+
+        # Get GPIO (reset)
+        local gpio="${DEVICE_GPIO[$dev_name]:-}"
+
+        # Get child PHY device
+        local children="${DEVICE_CHILDREN[$dev_name]:-}"
+        local phy_addr=""
+        local phy_compat=""
+        if [[ -n "$children" ]]; then
+            local child_name="${children%%:*}"
+            phy_addr="${children#*:}"
+            phy_addr="${phy_addr%%,*}"
+            local child_dsd="${CHILD_DEVICE_DSD[${dev_name}_${child_name}]:-}"
+            if [[ "$child_dsd" =~ compatible=([^,]+) ]]; then
+                phy_compat="${BASH_REMATCH[1]}"
+            fi
+        fi
+
+        cat << EOF
+
+		$gmac_name: ethernet@$addr {
+			compatible = "cix,sky1-gmac";
+			reg = <0x0 0x$addr 0x0 0x$size>;
+			interrupts = <GIC_SPI $irq_spi IRQ_TYPE_LEVEL_HIGH>;
+EOF
+        if [[ -n "$pinctrl" ]]; then
+            echo "			pinctrl-names = \"default\";"
+            echo "			pinctrl-0 = <&${pinctrl}>;"
+        fi
+        echo "			phy-mode = \"$phy_mode\";"
+        if [[ -n "$phy_addr" ]]; then
+            echo "			phy-handle = <&phy${gmac_idx}>;"
+        fi
+        echo "			status = \"disabled\";"
+
+        # Add MDIO bus with PHY child
+        if [[ -n "$phy_addr" && -n "$phy_compat" ]]; then
+            cat << EOF
+
+			mdio {
+				compatible = "snps,dwmac-mdio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				phy${gmac_idx}: ethernet-phy@${phy_addr} {
+					compatible = "$phy_compat";
+					reg = <${phy_addr}>;
+				};
+			};
+EOF
+        fi
+        echo "		};"
+    done
 }
 
 # Generate fixed regulators based on extraction
@@ -1214,6 +1381,124 @@ generate_regulators() {
 	};
 EOF
     done
+}
+
+# Generate panel and backlight nodes from ACPI EDP0 and DPBL devices
+generate_panel_backlight() {
+    local devices_file="$1"
+
+    # Check if we have EDP0 (panel) and DPBL (backlight)
+    local edp_gpio="${DEVICE_GPIO[EDP0]:-}"
+    local edp_dsd="${DEVICE_DSD[EDP0]:-}"
+    local edp_pinctrl="${DEVICE_PINCTRL[EDP0]:-}"
+
+    local bl_gpio="${DEVICE_GPIO[DPBL]:-}"
+    local bl_dsd="${DEVICE_DSD[DPBL]:-}"
+
+    # Generate backlight node if DPBL exists
+    if [[ -n "$bl_gpio" || -n "$bl_dsd" ]]; then
+        echo ""
+        echo "	/* PWM Backlight */"
+
+        # Parse GPIO: GPI3:15 -> fch_gpio3, pin 15
+        local bl_gpio_ctrl=""
+        local bl_gpio_pin=""
+        if [[ "$bl_gpio" =~ ^GPI([0-9]):([0-9]+) ]]; then
+            local gpio_num="${BASH_REMATCH[1]}"
+            bl_gpio_pin="${BASH_REMATCH[2]}"
+            bl_gpio_ctrl="fch_gpio${gpio_num}"
+        fi
+
+        # Parse default brightness from DSD
+        local default_brightness="200"
+        if [[ "$bl_dsd" =~ default-brightness-level=([0-9]+) ]]; then
+            default_brightness="${BASH_REMATCH[1]}"
+        fi
+
+        cat << EOF
+
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pwm0 0 100000>;
+		brightness-levels = <0 4 8 16 32 64 128 255>;
+		default-brightness-level = <6>;
+EOF
+        if [[ -n "$bl_gpio_ctrl" ]]; then
+            echo "		enable-gpios = <&${bl_gpio_ctrl} ${bl_gpio_pin} GPIO_ACTIVE_HIGH>;"
+        fi
+        cat << 'EOF'
+		status = "disabled";
+	};
+EOF
+    fi
+
+    # Generate panel node if EDP0 exists
+    if [[ -n "$edp_gpio" || -n "$edp_dsd" ]]; then
+        echo ""
+        echo "	/* eDP Panel */"
+
+        # Parse timing delays from DSD
+        local prepare_delay="120"
+        local enable_delay="120"
+        local unprepare_delay="500"
+        local disable_delay="120"
+        local width_mm="129"
+        local height_mm="171"
+
+        if [[ "$edp_dsd" =~ prepare-delay-ms=([0-9]+) ]]; then
+            prepare_delay="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$edp_dsd" =~ enable-delay-ms=([0-9]+) ]]; then
+            enable_delay="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$edp_dsd" =~ unprepare-delay-ms=([0-9]+) ]]; then
+            unprepare_delay="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$edp_dsd" =~ disable-delay-ms=([0-9]+) ]]; then
+            disable_delay="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$edp_dsd" =~ width-mm=([0-9]+) ]]; then
+            width_mm="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$edp_dsd" =~ height-mm=([0-9]+) ]]; then
+            height_mm="${BASH_REMATCH[1]}"
+        fi
+
+        # Parse GPIO: GPI3:16 -> fch_gpio3, pin 16
+        local edp_gpio_ctrl=""
+        local edp_gpio_pin=""
+        if [[ "$edp_gpio" =~ ^GPI([0-9]):([0-9]+) ]]; then
+            local gpio_num="${BASH_REMATCH[1]}"
+            edp_gpio_pin="${BASH_REMATCH[2]}"
+            edp_gpio_ctrl="fch_gpio${gpio_num}"
+        fi
+
+        cat << EOF
+
+	panel_edp: panel-edp {
+		compatible = "panel-edp";
+		prepare-delay-ms = <${prepare_delay}>;
+		enable-delay-ms = <${enable_delay}>;
+		unprepare-delay-ms = <${unprepare_delay}>;
+		disable-delay-ms = <${disable_delay}>;
+		width-mm = <${width_mm}>;
+		height-mm = <${height_mm}>;
+EOF
+        if [[ -n "$edp_gpio_ctrl" ]]; then
+            echo "		enable-gpios = <&${edp_gpio_ctrl} ${edp_gpio_pin} GPIO_ACTIVE_HIGH>;"
+        fi
+        if [[ -n "$bl_gpio" ]]; then
+            echo "		backlight = <&backlight>;"
+        fi
+        if [[ -n "$edp_pinctrl" ]]; then
+            echo "		pinctrl-names = \"default\";"
+            echo "		pinctrl-0 = <&${edp_pinctrl}>;"
+        fi
+        cat << 'EOF'
+		status = "disabled";
+	};
+EOF
+    fi
 }
 
 # Generate placeholder clock node (fallback if CRU not found)
@@ -1325,6 +1610,7 @@ main() {
         generate_gic_node
         generate_cru_and_reset_nodes "$devices_tmp"
         generate_regulators "$EXTRACTION_DIR/12-regulators.txt"
+        generate_panel_backlight "$devices_tmp"
         generate_soc_node "$devices_tmp" "$EXTRACTION_DIR"
 
         echo ""
