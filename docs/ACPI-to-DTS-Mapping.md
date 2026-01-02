@@ -484,20 +484,27 @@ i2c0: i2c@04010000 {
 | Feature | Source | Notes |
 |---------|--------|-------|
 | SoC peripherals | DSDT | I2C, UART, SPI, GPIO, USB, PCIe, GPU, etc. |
-| Fixed regulators | SSDT (PRP0001) | Names and voltages; GPIO enables need resolution |
-| GPIO LEDs | SSDT (PRP0001) | Labels extracted; GPIO pins need additional work |
-| Buttons | SSDT (ACPI0011) | Device detected; GPIO mapping in progress |
+| Fixed regulators | SSDT (PRP0001) | Name, voltage, GPIO enable (controller + pin) |
+| GPIO LEDs | SSDT (PRP0001) | Label, GPIO (controller + pin), trigger, active level |
+| Buttons | SSDT (ACPI0011) | GPIO (controller + pin), keycode, wakeup |
 | Ethernet PHY | DSDT child devices | MDIO address and compatible |
 | Panel/backlight | DSDT (EDP0/DPBL) | Basic timing and GPIO |
+
+### Fully Extracted from SSDT
+
+| Feature | Source | Details |
+|---------|--------|---------|
+| Regulator GPIO enables | _CRS GpioIo | Controller + pin + active level |
+| LED GPIO pins | _CRS + _DSD | Controller + pin + trigger + active level |
+| Button GPIO | ACPI0011 _CRS | Controller + pin + keycode |
 
 ### Partially Extracted (Needs Enhancement)
 
 | Property | What's Extracted | What's Missing |
 |----------|------------------|----------------|
-| Regulator GPIO enables | GPIO controller reference | Pin number (uses phandle) |
-| LED GPIO pins | Labels | GPIO controller and pin |
-| Button GPIO | Controller detected | Full GPIO specification |
 | Pinctrl groups | Group names | Pin definitions (mux values) |
+| Sound cards | CIXH6070 device | Codec routing, I2S config |
+| USB-C PD | CIXH200D device | PD controller properties |
 
 ### Requires Manual Work
 

@@ -785,7 +785,8 @@ extract_prp0001_devices() {
 
     # Track _CRS section for GPIO
     in_prp0001 && /Name \(_CRS,/ { in_crs = 1 }
-    in_prp0001 && in_crs && /\)$/ && !/ResourceTemplate/ { in_crs = 0 }
+    # End _CRS on closing }) which marks end of ResourceTemplate
+    in_prp0001 && in_crs && /^[[:space:]]*\}\)/ { in_crs = 0 }
 
     # Extract GPIO controller from GpioIo
     in_prp0001 && in_crs && /\\_SB\.GPI[0-9]/ {
@@ -879,19 +880,20 @@ extract_buttons_and_leds() {
     [[ -f "$ssdt_file" ]] || return 0
 
     # Check for ACPI0011 (gpio-keys) device
-    if grep -q 'Name (_HID, "ACPI0011")' "$ssdt_file" 2>/dev/null; then
+    if grep -q '_HID.*ACPI0011' "$ssdt_file" 2>/dev/null; then
         log "  Found ACPI0011 (GPIO buttons) device"
-        # Extract button GPIO - complex structure, simplified extraction
+        # Extract button GPIO from GpioInt resource
         local btn_info
-        btn_info=$(awk '
-        /Name \(_HID, "ACPI0011"\)/ { in_btns = 1 }
-        in_btns && /\\_SB\.GPI[0-9]/ {
-            if (match($0, /\\_SB\.(GPI[0-9])/, arr)) {
-                gpio_ctrl = arr[1]
-            }
+        btn_info=$(gawk '
+        /_HID,.*ACPI0011/ { in_btns = 1; in_crs = 0 }
+        in_btns && /^[[:space:]]*Device \(/ { in_btns = 0 }
+        in_btns && /_CRS,/ { in_crs = 1 }
+        in_btns && in_crs && /^[[:space:]]*\}\)/ { in_crs = 0 }
+        in_btns && in_crs && /GPI[0-9]/ {
+            if (match($0, /(GPI[0-9])/, arr)) gpio_ctrl = arr[1]
         }
-        in_btns && /Pin list/ { in_pin = 1; next }
-        in_btns && in_pin && /0x[0-9A-Fa-f]+/ {
+        in_btns && in_crs && /Pin list/ { in_pin = 1; next }
+        in_btns && in_crs && in_pin && /0x[0-9A-Fa-f]+/ {
             if (match($0, /0x([0-9A-Fa-f]+)/, arr)) {
                 printf "%s|%s\n", gpio_ctrl, strtonum("0x" arr[1])
             }
@@ -904,24 +906,65 @@ extract_buttons_and_leds() {
         fi
     fi
 
-    # Extract individual LED entries from LEDS device _DSD
+    # Extract individual LED entries from LEDS device with full GPIO info
     local led_result
-    led_result=$(awk '
-    BEGIN { in_leds = 0; in_dsd = 0 }
-    /Device \(LEDS\)/ { in_leds = 1 }
+    led_result=$(gawk '
+    BEGIN { in_leds = 0; res_count = 0 }
+    /Device \(LEDS\)/ { in_leds = 1; in_crs = 0; next }
     in_leds && /Device \([A-Z0-9]+\)/ && !/Device \(LEDS\)/ { in_leds = 0 }
-    in_leds && /Name \(_DSD,/ { in_dsd = 1 }
-    in_leds && in_dsd && /"label",/ { wait_label = 1; next }
-    in_leds && in_dsd && wait_label {
-        if (match($0, /"([^"]+)"/, arr)) {
-            printf "LED|%s\n", arr[1]
-            wait_label = 0
+
+    # Track _CRS section
+    in_leds && /Name \(_CRS,/ { in_crs = 1 }
+    in_leds && in_crs && /^[[:space:]]*\}\)/ { in_crs = 0 }
+
+    # Collect GPIO resources - each GpioIo can have multiple pins
+    in_leds && in_crs && /\\_SB\.GPI[0-9]/ {
+        if (match($0, /\\_SB\.(GPI[0-9])/, arr)) current_ctrl = arr[1]
+    }
+    in_leds && in_crs && /Pin list/ { in_pin_list = 1; next }
+    in_leds && in_crs && in_pin_list {
+        while (match($0, /0x([0-9A-Fa-f]+)/, arr)) {
+            gpio_res[res_count] = current_ctrl
+            gpio_pin[res_count] = strtonum("0x" arr[1])
+            res_count++
+            $0 = substr($0, RSTART + RLENGTH)
         }
+        if (/\}/) in_pin_list = 0
+    }
+
+    # Match LED definitions
+    in_leds && /Name \(LED[0-9],/ {
+        led_idx = ""; led_label = ""; led_trigger = ""; led_active = 0
+        if (match($0, /Name \(LED([0-9])/, arr)) led_idx = arr[1]
+    }
+    in_leds && led_idx != "" && /"label",/ { getline; if (match($0, /"([^"]+)"/, arr)) led_label = arr[1] }
+    in_leds && led_idx != "" && /"linux,default-trigger",/ { getline; if (match($0, /"([^"]+)"/, arr)) led_trigger = arr[1] }
+
+    # Parse gpios package: {^LEDS, res_idx, pin_idx, active_level}
+    in_leds && led_idx != "" && /"gpios",/ {
+        getline; getline; getline  # Skip Package, {, ^LEDS
+        getline; res_idx = (/One/ ? 1 : 0)
+        getline; pin_in_res = (/One/ ? 1 : 0)
+        getline; led_active = (/One/ ? 0 : 1)
+
+        # Calculate actual GPIO index from resource index + pin offset
+        actual_idx = 0
+        cnt = 0
+        for (j = 0; j < res_count; j++) {
+            if (cnt == res_idx) { actual_idx = j + pin_in_res; break }
+            if (j+1 < res_count && gpio_res[j+1] != gpio_res[j]) cnt++
+            else if (j+1 >= res_count) cnt++
+        }
+
+        if (led_label != "" && actual_idx < res_count) {
+            printf "LED|%s|%s|%d|%s|%d\n", led_label, gpio_res[actual_idx], gpio_pin[actual_idx], led_trigger, led_active
+        }
+        led_idx = ""
     }
     ' "$ssdt_file")
 
-    while IFS='|' read -r type name; do
-        [[ "$type" == "LED" ]] && SSDT_LEDS["$name"]="unknown|0|none"
+    while IFS='|' read -r type label ctrl pin trigger active; do
+        [[ "$type" == "LED" && -n "$label" ]] && SSDT_LEDS["$label"]="${ctrl}|${pin}|${trigger}|${active}"
     done <<< "$led_result"
 }
 
@@ -1692,16 +1735,42 @@ generate_gpio_leds_from_ssdt() {
     echo "	gpio-leds {"
     echo "		compatible = \"gpio-leds\";"
 
-    for led_name in "${!SSDT_LEDS[@]}"; do
-        local data="${SSDT_LEDS[$led_name]}"
-        # For now just output placeholder - full GPIO info needs more parsing
+    for led_label in "${!SSDT_LEDS[@]}"; do
+        local data="${SSDT_LEDS[$led_label]}"
+        local gpio_ctrl gpio_pin trigger active_low
+        IFS='|' read -r gpio_ctrl gpio_pin trigger active_low <<< "$data"
+
+        # Convert GPIO controller to phandle (GPI4 -> s5_gpio0, GPI5 -> s5_gpio2, etc)
+        local gpio_phandle=""
+        case "$gpio_ctrl" in
+            GPI0) gpio_phandle="fch_gpio0" ;;
+            GPI1) gpio_phandle="fch_gpio1" ;;
+            GPI2) gpio_phandle="fch_gpio2" ;;
+            GPI3) gpio_phandle="fch_gpio3" ;;
+            GPI4) gpio_phandle="s5_gpio0" ;;
+            GPI5) gpio_phandle="s5_gpio2" ;;
+            *) gpio_phandle="gpio" ;;
+        esac
+
+        local active_flag
+        if [[ "$active_low" == "1" ]]; then
+            active_flag="GPIO_ACTIVE_LOW"
+        else
+            active_flag="GPIO_ACTIVE_HIGH"
+        fi
+
+        # Sanitize label for node name
+        local node_name="${led_label//[:]/_}"
+        node_name="${node_name//[ ]/_}"
+
         cat << EOF
 
-		led-${led_name} {
-			label = "${led_name}";
-			/* GPIO info requires additional SSDT parsing */
-		};
+		led-${node_name} {
+			label = "${led_label}";
+			gpios = <&${gpio_phandle} ${gpio_pin} ${active_flag}>;
 EOF
+        [[ -n "$trigger" && "$trigger" != "none" ]] && echo "			linux,default-trigger = \"${trigger}\";"
+        echo "		};"
     done
     echo "	};"
 }

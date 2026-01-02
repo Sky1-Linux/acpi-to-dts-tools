@@ -3,7 +3,7 @@
  * Device Tree Source for Radxa Orion O6
  *
  * Auto-generated from ACPI DSDT by acpi-to-dts.sh
- * Generated: 2026-01-02T18:29:08+11:00
+ * Generated: 2026-01-02T19:16:46+11:00
  *
  * This file was created from hardware extraction data.
  * Manual review and adjustment is required before use.
@@ -191,6 +191,8 @@
 		regulator-name = "gbe1_power_3v3";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio2 7 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	gbe2_power_3v3: regulator-gbe2_power_3v3 {
@@ -198,6 +200,8 @@
 		regulator-name = "gbe2_power_3v3";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio0 9 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	vcc_ssd_pwren: regulator-vcc_ssd_pwren {
@@ -205,6 +209,8 @@
 		regulator-name = "vcc_ssd_pwren";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio0 11 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	cam_power_en_4: regulator-cam_power_en_4 {
@@ -212,6 +218,8 @@
 		regulator-name = "cam_power_en_4";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&fch_gpio1 6 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	vdd_3v3_pcie: regulator-vdd_3v3_pcie {
@@ -219,6 +227,8 @@
 		regulator-name = "vdd_3v3_pcie";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio0 12 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	vgfx_power: regulator-vgfx_power {
@@ -226,20 +236,24 @@
 		regulator-name = "vgfx_power";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio2 2 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	/* GPIO LEDs (from ACPI SSDT) */
 	gpio-leds {
 		compatible = "gpio-leds";
 
-		led-blue:status {
+		led-blue_status {
 			label = "blue:status";
-			/* GPIO info requires additional SSDT parsing */
+			gpios = <&s5_gpio0 7 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
 		};
 
-		led-green:power {
+		led-green_power {
 			label = "green:power";
-			/* GPIO info requires additional SSDT parsing */
+			gpios = <&s5_gpio2 0 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "default-on";
 		};
 	};
 

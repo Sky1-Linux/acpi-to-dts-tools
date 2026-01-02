@@ -3,7 +3,7 @@
  * Device Tree Source for Radxa Orion O6N
  *
  * Auto-generated from ACPI DSDT by acpi-to-dts.sh
- * Generated: 2026-01-02T18:28:36+11:00
+ * Generated: 2026-01-02T19:16:53+11:00
  *
  * This file was created from hardware extraction data.
  * Manual review and adjustment is required before use.
@@ -191,6 +191,8 @@
 		regulator-name = "vdd_usb_drive_vbus0";
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
+		gpio = <&s5_gpio0 29 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -199,6 +201,8 @@
 		regulator-name = "vdd_3v3_bkey";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&fch_gpio0 30 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -207,6 +211,8 @@
 		regulator-name = "gbe1_power_3v3";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio0 9 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -215,6 +221,8 @@
 		regulator-name = "vdd_wl_radio_disable_l";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio2 4 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -223,6 +231,8 @@
 		regulator-name = "gbe2_power_3v3";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio2 7 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -231,6 +241,8 @@
 		regulator-name = "vdd_bt_radio_disable_l";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio2 5 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -239,6 +251,8 @@
 		regulator-name = "vdd_tpm_pwr_en";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio2 8 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -247,6 +261,8 @@
 		regulator-name = "vdd_bkey_reset";
 		regulator-min-microvolt = <1800000>;
 		regulator-max-microvolt = <1800000>;
+		gpio = <&fch_gpio0 31 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	vdd_5v0_ufs: regulator-vdd_5v0_ufs {
@@ -254,6 +270,8 @@
 		regulator-name = "vdd_5v0_ufs";
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
+		gpio = <&s5_gpio0 13 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	cam_power_en_5: regulator-cam_power_en_5 {
@@ -269,6 +287,8 @@
 		regulator-name = "cam_power_en_4";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&fch_gpio1 6 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -277,6 +297,8 @@
 		regulator-name = "vdd_3v3_pcie";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&s5_gpio0 12 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 		regulator-always-on;
 	};
 
@@ -288,23 +310,37 @@
 		regulator-always-on;
 	};
 
+	/* GPIO Keys (from ACPI SSDT) */
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		button-power {
+			label = "power";
+			linux,code = <116>;
+			gpios = <&s5_gpio2 1 GPIO_ACTIVE_LOW>;
+			wakeup-source;
+		};
+	};
+
 	/* GPIO LEDs (from ACPI SSDT) */
 	gpio-leds {
 		compatible = "gpio-leds";
 
-		led-blue:status {
+		led-blue_status {
 			label = "blue:status";
-			/* GPIO info requires additional SSDT parsing */
+			gpios = <&s5_gpio0 7 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
 		};
 
-		led-green:power {
+		led-green_power {
 			label = "green:power";
-			/* GPIO info requires additional SSDT parsing */
+			gpios = <&s5_gpio2 0 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "default-on";
 		};
 
-		led-red:user {
+		led-red_user {
 			label = "red:user";
-			/* GPIO info requires additional SSDT parsing */
+			gpios = <&s5_gpio2 6 GPIO_ACTIVE_HIGH>;
 		};
 	};
 
